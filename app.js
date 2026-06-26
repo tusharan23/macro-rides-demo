@@ -9,6 +9,19 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 }).addTo(map);
 
 // ==========================================
+// 1.5 DRAW MACRO RIDES OPERATIONAL ZONE
+// ==========================================
+// A 12km radius representing the overall service boundary
+L.circle([28.6139, 77.2090], {
+    color: '#6f42c1',       // Purple border
+    weight: 2,
+    dashArray: '5, 5',      // Makes it a dashed line
+    fillColor: '#6f42c1',
+    fillOpacity: 0.05,      // Very faint so it doesn't hide the map
+    radius: 12000           // 12,000 meters (12km)
+}).addTo(map);
+
+// ==========================================
 // 2. OUR DATA VARIABLES (Passengers & Route)
 // ==========================================
 const pickupPoints = [
