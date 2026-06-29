@@ -1,135 +1,142 @@
-// ==========================================
-// 1. MAP INITIALIZATION
-// ==========================================
-const map = L.map('map').setView([28.6139, 77.2090], 11);
+// =========================================================================
+// SIMULATION CONTROLLER CLASS (Encapsulated & Scalable Architecture)
+// =========================================================================
+class SimulationController {
+    constructor() {
+        // Configuration Parameters
+        this.RESOLUTION = 9;
+        this.UPDATE_INTERVAL_MS = 1000;
+        
+        // State Management
+        this.activeIndex = 0;
+        this.simInterval = null;
+        
+        // Mock Data: Coordinates representing a route through Delhi
+        this.driverRouteCoords = [
+            [28.6139, 77.2090], // Central Delhi (Connaught Place)
+            [28.6200, 77.2110],
+            [28.6260, 77.2140],
+            [28.6320, 77.2180],
+            [28.6380, 77.2220],
+            [28.6440, 77.2250]  // Ending point
+        ];
 
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-    attribution: '© OpenStreetMap contributors'
-}).addTo(map);
+        this.pickupPoints = [
+            { id: 1, lat: 28.6139, lng: 77.2090, name: "Passenger A" }, 
+            { id: 2, lat: 28.6250, lng: 77.2150, name: "Passenger B" }, 
+            { id: 3, lat: 28.6350, lng: 77.2300, name: "Passenger C" }, 
+            { id: 4, lat: 28.6420, lng: 77.2240, name: "Passenger D" }
+        ];
 
-// ==========================================
-// 1.5 DRAW MACRO RIDES OPERATIONAL ZONE
-// ==========================================
-// A 12km radius representing the overall service boundary
-L.circle([28.6139, 77.2090], {
-    color: '#6f42c1',       // Purple border
-    weight: 2,
-    dashArray: '5, 5',      // Makes it a dashed line
-    fillColor: '#6f42c1',
-    fillOpacity: 0.05,      // Very faint so it doesn't hide the map
-    radius: 12000           // 12,000 meters (12km)
-}).addTo(map);
+        // Initialize components
+        this.initMap();
+        this.initLayers();
+        this.drawOperationalZone();
+        this.setupEventListeners();
+    }
 
-// ==========================================
-// 2. OUR DATA VARIABLES (Passengers & Route)
-// ==========================================
-const pickupPoints = [
-    { id: 1, lat: 28.6139, lng: 77.2090 }, // Central Delhi
-    { id: 2, lat: 28.6250, lng: 77.2150 }, // Nearby passenger 1
-    { id: 3, lat: 28.6050, lng: 77.2200 }, // Nearby passenger 2
-    { id: 4, lat: 28.5355, lng: 77.3910 }, // Far passenger (Noida)
-    { id: 5, lat: 28.4595, lng: 77.0266 }  // Far passenger (Gurgaon)
-];
+    // 1. Initialize Leaflet Map
+    initMap() {
+        this.map = L.map('map').setView([28.6139, 77.2090], 13);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(this.map);
+    }
 
-const driverRouteCoords = [
-    [28.6139, 77.2090], // Start near Central Delhi
-    [28.6160, 77.2120],
-    [28.6190, 77.2160],
-    [28.6220, 77.2190],
-    [28.6260, 77.2220]  // End further northeast
-];
+    // 2. Initialize Visual Layer Groups
+    initLayers() {
+        this.routeLayerGroup = L.layerGroup().addTo(this.map);
+        this.hexLayerGroup = L.layerGroup().addTo(this.map);
+        this.passengerLayerGroup = L.layerGroup().addTo(this.map);
+    }
 
-// ==========================================
-// 3. DRAW THE DRIVER'S ROUTE
-// ==========================================
-const routeLine = L.polyline(driverRouteCoords, {
-    color: '#007bff', 
-    weight: 5,        
-    opacity: 0.8
-}).addTo(map);
+    // 3. Draw a realistic Operational Service Boundary Polygon
+    drawOperationalZone() {
+        const operationalZoneCoords = [
+            [28.6600, 77.1800],
+            [28.6600, 77.2500],
+            [28.5800, 77.2500],
+            [28.5800, 77.1800]
+        ];
 
-map.fitBounds(routeLine.getBounds(), { padding: [50, 50] });
+        L.polygon(operationalZoneCoords, {
+            color: '#6f42c1',
+            weight: 2,
+            dashArray: '5, 5',
+            fillColor: '#6f42c1',
+            fillOpacity: 0.03
+        }).addTo(this.map);
+    }
 
-// ==========================================
-// 4. SIMULATION STATE & ELEMENTS
-// ==========================================
-const RESOLUTION = 9;
-let activeIndex = 0; // This acts like our 'i' in a C++ for-loop
-let simInterval = null;
+    // 4. Generate Spatial Buffer & Update UI per frame
+    updateFrame() {
+        this.hexLayerGroup.clearLayers();
+        this.passengerLayerGroup.clearLayers();
 
-// Create a "Car" marker and put it at the starting line
-const carMarker = L.circleMarker(driverRouteCoords[0], {
-    color: 'black',
-    fillColor: '#ffc107', // Yellow taxi color
-    fillOpacity: 1,
-    radius: 10
-}).addTo(map);
+        const currentCoord = this.driverRouteCoords[this.activeIndex];
+        L.marker(currentCoord).addTo(this.hexLayerGroup);
 
-// Groups to hold our dynamic shapes so we can wipe them clean every frame
-const hexLayerGroup = L.layerGroup().addTo(map);
-const passengerLayerGroup = L.layerGroup().addTo(map);
+        // Calculate active H3 corridor (k-ring = 1 around active hex provides ~350m buffer)
+        const centerHex = h3.latLngToCell(currentCoord[0], currentCoord[1], this.RESOLUTION);
+        const kRingHexagons = h3.gridDisk(centerHex, 1);
+        const corridorHexagons = new Set(kRingHexagons);
 
-// ==========================================
-// 5. THE UPDATE LOOP (The Engine)
-// ==========================================
-function updateFrame() {
-    // Clear the previous frame's drawings
-    hexLayerGroup.clearLayers();
-    passengerLayerGroup.clearLayers();
+        // Render H3 Hexagons on map
+        corridorHexagons.forEach(hex => {
+            const boundaries = h3.cellToBoundary(hex);
+            L.polygon(boundaries, {
+                color: '#28a745',
+                weight: 1,
+                fillColor: '#28a745',
+                fillOpacity: 0.15
+            }).addTo(this.hexLayerGroup);
+        });
 
-    // 1. Move the car to the new activeIndex
-    const currentCoord = driverRouteCoords[activeIndex];
-    carMarker.setLatLng(currentCoord);
+        // Evaluate passenger eligibility dynamically
+        this.pickupPoints.forEach(passenger => {
+            const passengerHex = h3.latLngToCell(passenger.lat, passenger.lng, this.RESOLUTION);
+            const isEligible = corridorHexagons.has(passengerHex);
+            const markerColor = isEligible ? '#28a745' : '#dc3545';
 
-    // 2. Build the Hexagon Shield for the current position
-    const corridorHexagons = new Set();
-    const centerHex = h3.latLngToCell(currentCoord[0], currentCoord[1], RESOLUTION);
-    const bufferHexes = h3.gridDisk(centerHex, 1);
-    bufferHexes.forEach(hex => corridorHexagons.add(hex));
+            L.circleMarker([passenger.lat, passenger.lng], {
+                color: markerColor,
+                fillColor: markerColor,
+                fillOpacity: 0.8,
+                radius: 8
+            })
+            .bindPopup(`<b>${passenger.name}</b><br>Status: ${isEligible ? 'Eligible' : 'Out of Range'}`)
+            .addTo(this.passengerLayerGroup);
+        });
 
-    // Draw the new shield
-    corridorHexagons.forEach(hexId => {
-        const hexBoundary = h3.cellToBoundary(hexId);
-        L.polygon(hexBoundary, {
-            color: '#00ffff', fillColor: '#00ffff', fillOpacity: 0.3, weight: 1
-        }).addTo(hexLayerGroup);
-    });
+        this.activeIndex++;
+        if (this.activeIndex >= this.driverRouteCoords.length) {
+            this.stopSimulation();
+        }
+    }
 
-    // 3. Evaluate Passengers against the new shield
-    pickupPoints.forEach(passenger => {
-        const passengerHex = h3.latLngToCell(passenger.lat, passenger.lng, RESOLUTION);
-        let markerColor = corridorHexagons.has(passengerHex) ? '#28a745' : 'red';
+    // 5. Execution Controls
+    startSimulation() {
+        this.activeIndex = 0;
+        this.simBtn.disabled = true;
+        document.getElementById('status').innerText = "Status: Driver in Transit...";
+        
+        this.updateFrame(); 
+        this.simInterval = setInterval(() => this.updateFrame(), this.UPDATE_INTERVAL_MS);
+    }
 
-        L.circleMarker([passenger.lat, passenger.lng], {
-            color: markerColor, fillColor: markerColor, fillOpacity: 1, radius: 8
-        }).addTo(passengerLayerGroup);
-    });
-
-    // 4. Increment the loop, or stop if we reached the end
-    activeIndex++;
-    if (activeIndex >= driverRouteCoords.length) {
-        clearInterval(simInterval); // Stop the timer
+    stopSimulation() {
+        clearInterval(this.simInterval);
         document.getElementById('status').innerText = "Status: Route Completed";
-        document.getElementById('sim-btn').disabled = false;
+        this.simBtn.disabled = false;
+    }
+
+    setupEventListeners() {
+        this.simBtn = document.getElementById('sim-btn');
+        this.simBtn.addEventListener('click', () => this.startSimulation());
     }
 }
 
-// ==========================================
-// 6. CONNECT THE START BUTTON
-// ==========================================
-const simBtn = document.getElementById('sim-btn');
-simBtn.disabled = false; // Enable the button now that code is ready
-
-simBtn.addEventListener('click', () => {
-    // Reset state to the beginning
-    activeIndex = 0;
-    document.getElementById('status').innerText = "Status: Driver in Transit...";
-    simBtn.disabled = true; // Prevent clicking while running
-
-    // Run the first frame immediately
-    updateFrame(); 
-    
-    // Start the loop (Run updateFrame every 1000 milliseconds)
-    simInterval = setInterval(updateFrame, 1000);
+document.addEventListener('DOMContentLoaded', () => {
+    new SimulationController();
 });
